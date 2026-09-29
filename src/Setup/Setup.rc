@@ -1,0 +1,64 @@
+#include <windows.h>
+#include "ProductBuild.h"
+#include "resource.h"
+
+#pragma code_page(65001)
+
+IDI_REGIONLENS ICON "../App/assets/RegionLens.ico"
+
+IDD_INSTALL_OPTIONS DIALOGEX 0, 0, 330, 214
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "RegionLens 安装程序"
+FONT 9, "Segoe UI"
+BEGIN
+    ICON            IDI_REGIONLENS, IDC_STATIC, 14, 13, 34, 34
+    LTEXT           "RegionLens", IDC_PRODUCT_TITLE, 57, 14, 250, 14, SS_NOPREFIX
+    LTEXT           "区域镜实时屏幕放大工具", IDC_STATIC, 57, 31, 210, 10, SS_NOPREFIX
+    CONTROL         "", IDC_STATIC, "Static", SS_ETCHEDHORZ, 14, 54, 302, 1
+
+    LTEXT           "安装路径", IDC_STATIC, 14, 66, 62, 10, SS_NOPREFIX
+    LTEXT           "", IDC_INSTALL_PATH, 14, 79, 302, 18, SS_NOPREFIX
+    LTEXT           "发布证书", IDC_STATIC, 14, 103, 62, 10, SS_NOPREFIX
+    LTEXT           "", IDC_CERTIFICATE, 81, 103, 235, 10, SS_NOPREFIX
+    LTEXT           "证书指纹", IDC_STATIC, 14, 117, 62, 10, SS_NOPREFIX
+    LTEXT           "", IDC_THUMBPRINT, 81, 117, 235, 20, SS_NOPREFIX
+
+    CONTROL         "开机自启", IDC_AUTOSTART, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 14, 146, 140, 14
+    CONTROL         "在桌面创建快捷方式", IDC_DESKTOP_SHORTCUT, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 14, 165, 180, 14
+
+    DEFPUSHBUTTON   "安装", IDOK, 211, 187, 50, 15
+    PUSHBUTTON      "取消", IDCANCEL, 266, 187, 50, 15
+END
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION RL_VERSION_TUPLE
+ PRODUCTVERSION RL_VERSION_TUPLE
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "CompanyName", "RegionLens Project\0"
+            VALUE "FileDescription", "RegionLens installer\0"
+            VALUE "FileVersion", RL_VERSION_TEXT
+            VALUE "InternalName", RL_CHANNEL_TEXT
+            VALUE "SourceCommit", RL_COMMIT_TEXT
+            VALUE "OriginalFilename", RL_SETUP_FILE
+            VALUE "ProductName", "RegionLens\0"
+            VALUE "ProductVersion", RL_VERSION_TEXT
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200
+    END
+END

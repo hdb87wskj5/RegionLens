@@ -1,0 +1,31 @@
+#include <windows.h>
+#include "ProductBuild.h"
+
+#define RL_WETYPE_DLL_FILE "RegionLens-WeTypeCompat.dll"
+#define RL_WETYPE_PRODUCT_NAME "RegionLens\0"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION RL_VERSION_TUPLE
+ PRODUCTVERSION RL_VERSION_TUPLE
+ FILEFLAGSMASK 0x3fL
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_DLL
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "CompanyName", "RegionLens Project\0"
+            VALUE "FileDescription", "RegionLens WeType compatibility\0"
+            VALUE "FileVersion", RL_VERSION_TEXT
+            VALUE "InternalName", RL_CHANNEL_TEXT
+            VALUE "SourceCommit", RL_COMMIT_TEXT
+            VALUE "OriginalFilename", RL_WETYPE_DLL_FILE
+            VALUE "ProductName", RL_WETYPE_PRODUCT_NAME
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200
+    END
+END

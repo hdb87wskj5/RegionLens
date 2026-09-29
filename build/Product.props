@@ -1,0 +1,10 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProductVersion>1.3.0</ProductVersion>
+    <ProductVersionQuad>$(ProductVersion).0</ProductVersionQuad>
+    <ProductVersionTuple>$(ProductVersionQuad.Replace('.', ','))</ProductVersionTuple>
+    <SourceCommit Condition="'$(SourceCommit)'==''">uncommitted</SourceCommit>
+    <Channel>Stable</Channel>
+    <AppFileName>RegionLens</AppFileName><ChannelId>Stable</ChannelId>
+  </PropertyGroup>
+</Project>

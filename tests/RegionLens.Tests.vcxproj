@@ -1,0 +1,11 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations"><ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration><ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration></ItemGroup>
+  <PropertyGroup Label="Globals"><ProjectGuid>{111AB9DA-960B-4457-9820-609733420006}</ProjectGuid><ProjectName>RegionLens.Tests</ProjectName><WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" /><PropertyGroup Label="Configuration"><ConfigurationType>Application</ConfigurationType><PlatformToolset>v145</PlatformToolset></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" /><Import Project="..\build\Common.props" />
+  <PropertyGroup><TargetName>RegionLens.Tests</TargetName></PropertyGroup>
+  <ItemDefinitionGroup><ClCompile><PreprocessorDefinitions>REGIONLENS_PRODUCTION_SOURCE;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile><Link><SubSystem>Console</SubSystem></Link></ItemDefinitionGroup>
+  <ItemGroup><ClCompile Include="*.cpp" /><ResourceCompile Include="TestUi.rc" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\src\Core\RegionLens.Core.vcxproj"><Project>{111AB9DA-960B-4457-9820-609733420001}</Project></ProjectReference></ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

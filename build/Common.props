@@ -1,0 +1,46 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="Product.props" />
+  <PropertyGroup>
+    <RepoRoot>$(MSBuildThisFileDirectory)..\</RepoRoot>
+    <PlatformToolset>v145</PlatformToolset><CharacterSet>Unicode</CharacterSet>
+    <OutDir>$(RepoRoot)out\$(Channel)\$(Configuration)\</OutDir>
+    <IntDir>$(RepoRoot)out\obj\$(Channel)\$(Configuration)\$(ProjectName)\</IntDir>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel><LanguageStandard>stdcpp20</LanguageStandard>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(IntDir);$(RepoRoot)src\Core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>%(AdditionalOptions) /utf-8 /bigobj /permissive-</AdditionalOptions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation><Optimization>MaxSpeed</Optimization><DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(IntDir);$(RepoRoot)src\Core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation><GenerateMapFile>true</GenerateMapFile><MapFileName>$(OutDir)$(TargetName).map</MapFileName>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dcomp.lib;dwmapi.lib;user32.lib;shell32.lib;shcore.lib;windowsapp.lib;magnification.lib;advapi32.lib;bcrypt.lib;ole32.lib;crypt32.lib;wintrust.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile><RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary><Optimization>Disabled</Optimization><PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile><PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <Link><EnableCOMDATFolding>true</EnableCOMDATFolding><OptimizeReferences>true</OptimizeReferences></Link>
+  </ItemDefinitionGroup>
+  <Target Name="GenerateProductHeader" BeforeTargets="PrepareForBuild;ClCompile;ResourceCompile">
+    <MakeDir Directories="$(IntDir)" />
+    <PropertyGroup Condition="'$(ManifestTemplate)'!=''">
+      <GeneratedManifest>$([System.IO.File]::ReadAllText('$(ManifestTemplate)'))</GeneratedManifest>
+      <GeneratedManifest>$(GeneratedManifest.Replace('@VERSION@', '$(ProductVersionQuad)').Replace('@PRODUCT@', '$(AppFileName)'))</GeneratedManifest>
+    </PropertyGroup>
+    <WriteLinesToFile Condition="'$(ManifestTemplate)'!=''" File="$(IntDir)Product.manifest" Lines="$(GeneratedManifest)" Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(IntDir)ProductBuild.h" Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="UTF-8"
+      Lines="#pragma once&#xA;#define RL_VERSION_TUPLE $(ProductVersionTuple)&#xA;#define RL_VERSION_TEXT &quot;$(ProductVersion)&quot;&#xA;#define RL_VERSION L&quot;$(ProductVersion)&quot;&#xA;#define RL_COMMIT_TEXT &quot;$(SourceCommit)&quot;&#xA;#define RL_COMMIT L&quot;$(SourceCommit)&quot;&#xA;#define RL_CHANNEL_TEXT &quot;$(ChannelId)&quot;&#xA;#define RL_APP_FILE &quot;$(AppFileName).exe&quot;&#xA;#define RL_SETUP_FILE &quot;$(AppFileName)-Setup.exe&quot;" />
+  </Target>
+</Project>
