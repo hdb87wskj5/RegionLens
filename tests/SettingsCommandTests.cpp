@@ -28,6 +28,26 @@ int RunSettingsCommandTests()
     int failures{};auto check=[&](bool ok,char const* label){if(!ok){++failures;std::cerr<<"FAILED settings native command: "<<label<<'\n';}};
     auto com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     auto priorLanguage=CurrentAppLanguage();SetAppLanguage(AppLanguage::SimplifiedChinese);
+    {
+        std::vector<bool> recording;
+        SettingsWindow sheet(AppSettings{},Available,[](auto const&){return SettingsApplyResult{};},
+            [&](bool active){recording.push_back(active);});
+        check(SettingsWindowTestAccess::Create(sheet),"create modeless recording test");
+        auto root=SettingsWindowTestAccess::Window(sheet);
+        if(root) {
+            MSG unrelated{};unrelated.message=WM_HOTKEY;unrelated.wParam=3;
+            check(!sheet.ProcessMessage(unrelated),"thread/controller hotkeys bypass the modeless sheet");
+            SettingsWindowTestAccess::SelectPage(sheet,1);
+            auto page=SettingsWindowTestAccess::Page(sheet,1);
+            auto record=[&]{SendMessageW(page,WM_COMMAND,MAKEWPARAM(4100,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(page,4100)));};
+            record();SettingsWindowTestAccess::Escape(sheet);
+            record();SendMessageW(root,WM_ACTIVATE,WA_INACTIVE,0);
+            record();SettingsWindowTestAccess::SelectPage(sheet,0);
+            SettingsWindowTestAccess::SelectPage(sheet,1);record();sheet.Close();
+            check(recording==std::vector<bool>({true,false,true,false,true,false,true,false}),
+                "recording, Escape, focus loss, page change and close balance shortcut release/restoration");
+        }
+    }
     for(int page=0;page<3;++page)for(int path=0;path<8;++path) {
         int commits{};AppSettings applied;
         SettingsWindow sheet(applied,Available,[&](auto const& value){++commits;applied=value;return SettingsApplyResult{};});

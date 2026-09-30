@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "AppSettings.h"
+#include "AppController.h"
 #include "SettingsWindowTestAccess.h"
 #include "LensManager.h"
 #include "ScreenshotStorage.h"
@@ -10,6 +11,23 @@
 using namespace RegionLens::native;
 namespace RegionLens::native
 {
+    struct SettingsControllerTestAccess
+    {
+        static bool Prepare(AppController& c,std::shared_ptr<D3DDevice> device,std::shared_ptr<InputMappingCoordinator> input)
+        {
+            c.m_settings.hotkeys.bindings={};c.m_hotkeys=c.m_settings.hotkeys;
+            c.m_device=std::move(device);c.m_inputMapping=std::move(input);
+            c.m_lensManager=std::make_unique<LensManager>(c.m_device,c.m_inputMapping,LensManager::CloseRequestCallback{});
+            return c.CreateControllerWindow(); // Hidden controller; never register real global shortcuts.
+        }
+        static LensManager& Manager(AppController& c) {return *c.m_lensManager;}
+        static HWND Owner(AppController& c) {return c.m_window;}
+        static std::shared_ptr<SettingsWindow> Dialog(AppController& c) {return c.m_settingsWindow;}
+        static void Open(AppController& c) {c.ShowSettings(false);}
+        static void CloseAllShortcut(AppController& c) {c.HandleMessage(WM_HOTKEY,3,0);}
+        static void PendingSelection(AppController& c,HMONITOR monitor) {c.m_pendingSelectionMonitor=monitor;}
+        static void NewRegionShortcut(AppController& c) {c.HandleMessage(WM_HOTKEY,1,0);}
+    };
     struct LensSettingsTestAccess
     {
         static LensWindow& Lens(LensManager& m,uint64_t id) { return *m.m_lenses.at(id); }
@@ -33,6 +51,15 @@ namespace
     int failures{};
     void Check(bool ok,char const* label) { if(!ok) { ++failures; std::cerr<<"FAILED settings: "<<label<<'\n'; } }
     struct InputState { int starts{}, stops{}; bool failDrain{}; };
+    class NotificationCounter final : public IDiagnosticSink
+    {
+    public:
+        int notifications{};
+        bool TryRecord(DiagnosticRecord const& record) noexcept override
+        { if(record.event==DiagnosticEvent::Notification) ++notifications;return true; }
+        std::wstring Directory() const override {return {};}
+        DWORD Error() const noexcept override {return 0;}
+    };
     class FakeEngine final : public IInputMappingEngine
     {
         InputState& s;
@@ -116,20 +143,44 @@ int RunSettingsTests()
     SettingsDraft draft(defaults); draft.editing=custom; Check(draft.Dirty(),"draft is separate from applied values");
     draft.Cancel(); Check(!draft.Dirty() && draft.editing==defaults,"cancel discards only unapplied edits");
     draft.editing=custom; draft.Accept(); draft.editing.quality=LensSharpness::Medium; draft.Cancel(); Check(draft.editing==custom,"cancel after commit keeps last saved settings");
-    int saves{}, releases{}; AppSettings stored=defaults;
+    int saves{}, releases{}; AppSettings stored=defaults;HotkeySettings live=defaults.hotkeys;
     auto commit=[&](AppSettings const& prior,AppSettings const& next,int conflict,HRESULT write) {
-        return CommitAppSettings(prior,next,[&](auto const& keys){return Availability(keys,conflict);},[&]{++releases;},
+        return CommitAppSettings(prior,next,[&](auto const& keys){live=keys;return Availability(keys,conflict);},[&]{++releases;live.bindings={};},
             [&](auto const& value){++saves; if(SUCCEEDED(write)) stored=value; return write;});
     };
     auto result=commit(defaults,custom,0,S_OK);
-    Check(!result.Applied() && saves==0 && releases==1 && stored==defaults,"new conflicting binding rolls back the complete draft");
+    Check(!result.Applied() && saves==0 && releases==2 && stored==defaults && live==defaults.hotkeys,"new conflicting binding restores the old live shortcuts and draft");
     result=commit(defaults,custom,-1,E_ACCESSDENIED);
-    Check(result.issue==SettingsApplyIssue::Storage && stored==defaults && releases==2,"storage failure releases all temporary registrations");
+    Check(result.issue==SettingsApplyIssue::Storage && stored==defaults && releases==4 && live==defaults.hotkeys,"storage failure restores working shortcuts before returning");
     auto optionsOnly=defaults; optionsOnly.quality=LensSharpness::Off;
     result=commit(defaults,optionsOnly,1,S_OK);
-    Check(result.Applied() && stored==optionsOnly,"unchanged existing conflict does not block other options");
+    Check(result.Applied() && stored==optionsOnly && live==optionsOnly.hotkeys,"unchanged existing conflict does not block other options or retire shortcuts");
     result=commit(defaults,custom,1,S_OK);
-    Check(result.Applied() && stored==custom,"changed valid key can save while unchanged occupied key stays unavailable");
+    Check(result.Applied() && stored==custom && live==custom.hotkeys,"successful save retains the newly registered shortcuts immediately");
+    try {
+        CommitAppSettings(defaults,custom,[&](auto const& keys){live=keys;return Availability(keys);},
+            [&]{live.bindings={};},[](auto const&)->HRESULT{throw std::runtime_error("fake storage exception");});
+        Check(false,"storage exception must reach caller");
+    } catch(std::runtime_error const&) {
+        Check(live==defaults.hotkeys,"exception restores prior live registrations");
+    }
+    auto owned=defaults.hotkeys.bindings;std::array<bool,HotkeyActionCount> registered{};registered.fill(true);
+    int externalProbes{};
+    auto availability=ProbeHotkeysPreservingRegistrations(defaults.hotkeys,owned,registered,
+        [&](size_t,HotkeyBinding){++externalProbes;return DWORD(ERROR_HOTKEY_ALREADY_REGISTERED);});
+    Check(availability.AllSucceeded() && externalProbes==0,"applied owned shortcuts are available without unregistering them");
+    auto moved=defaults.hotkeys;std::swap(moved.bindings[0],moved.bindings[1]);
+    availability=ProbeHotkeysPreservingRegistrations(moved,owned,registered,
+        [&](size_t,HotkeyBinding){++externalProbes;return DWORD(ERROR_HOTKEY_ALREADY_REGISTERED);});
+    Check(availability.AllSucceeded() && externalProbes==0,"a draft binding owned under another action is not an external conflict");
+    availability=ProbeHotkeysPreservingRegistrations(custom.hotkeys,owned,registered,
+        [&](size_t,HotkeyBinding){++externalProbes;return DWORD(ERROR_HOTKEY_ALREADY_REGISTERED);});
+    Check(!availability.items[0].succeeded && availability.items[1].succeeded && owned==defaults.hotkeys.bindings &&
+        std::all_of(registered.begin(),registered.end(),[](bool v){return v;}),"external conflicts are detected without changing live registrations");
+    registered.fill(false);externalProbes=0;
+    availability=ProbeHotkeysPreservingRegistrations(defaults.hotkeys,owned,registered,
+        [&](size_t,HotkeyBinding){++externalProbes;return DWORD(ERROR_SUCCESS);});
+    Check(availability.AllSucceeded() && externalProbes==int(HotkeyActionCount),"recording temporarily released shortcuts are probed normally");
 
     // Isolated HKCU tree only. Neither channel's real preferences are written.
     auto key=L"Software\\RegionLens-SettingsTests-"+NewScreenshotFileName();
@@ -320,6 +371,48 @@ int RunSettingsTests()
 
     auto device=std::make_shared<D3DDevice>();
     if(device->Initialize()) {
+        {
+            InputState state;
+            auto input=std::make_shared<InputMappingCoordinator>(nullptr,InputMappingCoordinator::NotificationCallback{},
+                InputMappingDependencies{[&](HWND){return std::make_unique<FakeEngine>(state);},[]{return true;}});
+            input->Initialize();AppController controller;
+            Check(SettingsControllerTestAccess::Prepare(controller,device,input),"prepare controller without real hotkeys or input");
+            auto& manager=SettingsControllerTestAccess::Manager(controller);
+            auto monitor=MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY);
+            auto id=manager.Create(monitor,{0,0,80,80},{-22000,-22000,-21700,-21800});
+            if(id) {
+                LensSettingsTestAccess::Arm(manager,*id);
+                input->Route(LensSettingsTestAccess::Lens(manager,*id).MappingConfig());
+                auto starts=state.starts,stops=state.stops;
+                SettingsControllerTestAccess::Open(controller);
+                auto sheet=SettingsControllerTestAccess::Dialog(controller);
+                Check(sheet && IsWindow(SettingsWindowTestAccess::Window(*sheet)) &&
+                    IsWindowEnabled(SettingsControllerTestAccess::Owner(controller)),"opening settings returns immediately and leaves controller enabled");
+                Check(state.starts==starts && state.stops==stops && input->HasRoute() &&
+                    LensSettingsTestAccess::Armed(manager)==1,"opening settings preserves the active engine and mapping standby");
+                if(sheet) {
+                    auto originalRuntime=Runtime();auto observedRuntime=originalRuntime;NotificationCounter notifications;
+                    observedRuntime.diagnostics=&notifications;SetRuntime(observedRuntime);
+                    // Exercise the production NewRegion dispatch without starting
+                    // capture: an already-pending selection must reach its normal
+                    // guard instead of redirecting to the settings dialog.
+                    SettingsControllerTestAccess::PendingSelection(controller,monitor);
+                    SettingsControllerTestAccess::NewRegionShortcut(controller);
+                    SettingsControllerTestAccess::PendingSelection(controller,nullptr);
+                    SetRuntime(originalRuntime);
+                    Check(notifications.notifications==1,"new-region shortcut reaches selection logic while settings is open");
+                    MSG hotkey{};hotkey.hwnd=SettingsControllerTestAccess::Owner(controller);hotkey.message=WM_HOTKEY;hotkey.wParam=3;
+                    Check(!controller.ProcessMessage(hotkey),"modeless settings does not consume controller hotkey messages");
+                    SettingsControllerTestAccess::CloseAllShortcut(controller);
+                    Check(manager.Count()==0 && LensSettingsTestAccess::Armed(manager)==0 &&
+                        IsWindow(SettingsWindowTestAccess::Window(*sheet)),"close-all shortcut works while settings stays open");
+                    SettingsWindowTestAccess::Cancel(*sheet);SettingsWindowTestAccess::PumpPosted(*sheet);
+                    controller.ProcessMessage(hotkey);
+                    Check(!SettingsControllerTestAccess::Dialog(controller) && LensSettingsTestAccess::Armed(manager)==0,
+                        "closing settings retires its instance without rearming closed regions");
+                }
+            } else Check(false,"create offscreen controller-test region");
+        }
         InputState state;
         auto coordinator=std::make_shared<InputMappingCoordinator>(nullptr,InputMappingCoordinator::NotificationCallback{},
             InputMappingDependencies{[&](HWND){return std::make_unique<FakeEngine>(state);},[]{return true;}});
@@ -353,13 +446,13 @@ int RunSettingsTests()
                 LensSettingsTestAccess::Arm(manager,*second);
                 coordinator->Route(LensSettingsTestAccess::Lens(manager,*second).MappingConfig());
                 auto starts=state.starts;
-                manager.SetSettingsUiOpen(true);
-                Check(state.stops==1 && LensSettingsTestAccess::Armed(manager)==1,"settings stops the sole engine/guard while preserving standby");
+                manager.SetSettingsCommitInProgress(true);
+                Check(state.stops==1 && LensSettingsTestAccess::Armed(manager)==1,"settings commit stops the sole engine/guard while preserving standby");
                 for(int i=0;i<50;++i) manager.RefreshInputMappingFromCursor();
                 Check(LensSettingsTestAccess::Armed(manager)==1,"periodic UI pumps preserve a deliberately stopped settings session");
-                manager.SetSettingsUiOpen(false);
+                manager.SetSettingsCommitInProgress(false);
                 Check(state.starts==starts+1 && LensSettingsTestAccess::Armed(manager)==1,"settings close starts a fresh safe route");
-                manager.SetSettingsUiOpen(true);
+                manager.SetSettingsCommitInProgress(true);
                 auto& shutdownLens=LensSettingsTestAccess::Lens(manager,*second);
                 Check(shutdownLens.SetInputPassThrough(true) &&
                     (GetWindowLongPtrW(shutdownLens.Window(),GWL_EXSTYLE)&WS_EX_TRANSPARENT),
@@ -367,13 +460,13 @@ int RunSettingsTests()
                 manager.DisableAllInputMappings();
                 Check(!(GetWindowLongPtrW(shutdownLens.Window(),GWL_EXSTYLE)&WS_EX_TRANSPARENT),
                     "global shutdown restores hit testing before software pointer retirement");
-                manager.SetSettingsUiOpen(false);
+                manager.SetSettingsCommitInProgress(false);
                 Check(state.starts==starts+1 && LensSettingsTestAccess::Armed(manager)==0,"global shutdown during settings cannot rearm old sessions");
                 LensSettingsTestAccess::Arm(manager,*second);
                 coordinator->Route(LensSettingsTestAccess::Lens(manager,*second).MappingConfig());
                 starts=state.starts; state.failDrain=true;
-                manager.SetSettingsUiOpen(true);
-                state.failDrain=false; manager.SetSettingsUiOpen(false);
+                manager.SetSettingsCommitInProgress(true);
+                state.failDrain=false; manager.SetSettingsCommitInProgress(false);
                 Check(state.starts==starts && LensSettingsTestAccess::Armed(manager)==0,
                     "failed input drain when opening settings clears standby and never restarts it on close");
             }

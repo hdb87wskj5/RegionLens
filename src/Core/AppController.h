@@ -24,8 +24,10 @@ namespace RegionLens::native
         ~AppController();
 
         bool Initialize(bool quietStartup = false);
+        bool ProcessMessage(MSG& message);
 
     private:
+        friend struct SettingsControllerTestAccess;
         static constexpr UINT FrameReadyMessage = WM_APP + 1;
         static constexpr UINT SelectionConfirmedMessage = WM_APP + 2;
         static constexpr UINT SelectionCancelledMessage = WM_APP + 3;
@@ -64,7 +66,7 @@ namespace RegionLens::native
         HotkeyRegistrationResult RegisterConfiguredHotkeys(HotkeySettings const& settings);
         HotkeyRegistrationResult ProbeHotkeyAvailability(HotkeySettings const& settings);
         void ReleaseConfiguredHotkeys();
-        void ShowSettings();
+        void ShowSettings(bool visible = true);
         SettingsApplyResult ApplySettings(AppSettings const& settings);
         void TakeScreenshot(uint64_t lensId);
         void PumpScreenshots();
@@ -79,6 +81,7 @@ namespace RegionLens::native
         NOTIFYICONDATAW m_tray{};
         bool m_trayAdded{};
         std::array<bool, HotkeyActionCount> m_registeredHotkeys{};
+        std::array<HotkeyBinding, HotkeyActionCount> m_registeredBindings{};
         bool m_visibilityAction{};
         HotkeySettings m_hotkeys{};
         HotkeyRegistrationResult m_hotkeyRegistration{};
@@ -90,6 +93,7 @@ namespace RegionLens::native
         AppSettings m_settings;
         std::shared_ptr<SettingsWindow> m_settingsWindow;
         bool m_settingsOpening{};
+        bool m_settingsRecording{}, m_settingsApplying{};
         std::wstring m_screenshotDirectory;
         ScreenshotRenderer m_screenshotRenderer;
         ScreenshotService m_screenshots;

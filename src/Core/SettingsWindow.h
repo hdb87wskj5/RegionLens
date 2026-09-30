@@ -13,9 +13,12 @@ namespace RegionLens::native
     public:
         using Probe = std::function<HotkeyRegistrationResult(HotkeySettings const&)>;
         using Apply = std::function<SettingsApplyResult(AppSettings const&)>;
-        SettingsWindow(AppSettings const& current, Probe probe, Apply apply);
+        using RecordingChanged = std::function<void(bool)>;
+        SettingsWindow(AppSettings const& current, Probe probe, Apply apply, RecordingChanged recordingChanged = {});
         ~SettingsWindow();
-        void Run(HWND owner);
+        bool Show(HWND owner, bool visible = true);
+        bool ProcessMessage(MSG& message);
+        bool Finished() const noexcept { return m_finished; }
         void Activate();
         void Close();
     private:
@@ -27,7 +30,7 @@ namespace RegionLens::native
         static INT_PTR CALLBACK PageProc(HWND, UINT, WPARAM, LPARAM);
         INT_PTR PageMessage(HWND, int, UINT, WPARAM, LPARAM);
         bool Create(HWND owner, bool show, UINT fontPoints=0);
-        void ProcessMessage(MSG& message);
+        void SetRecording(std::optional<size_t> recording);
         void FinishNativeClose();
         void RequestFinishCheck();
         void CreateControls(int page);
@@ -59,6 +62,7 @@ namespace RegionLens::native
         HotkeyRegistrationResult m_availability;
         Probe m_probe;
         Apply m_apply;
+        RecordingChanged m_recordingChanged;
         HWND m_owner{}, m_window{}, m_tabs{};
         std::array<HWND,3> m_pages{}, m_status{};
         std::array<PageContext,3> m_pageContexts{};

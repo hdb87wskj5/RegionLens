@@ -36,16 +36,21 @@ namespace RegionLens::native
         bool Applied() const noexcept { return issue == SettingsApplyIssue::None; }
     };
 
-    // All registrations here are temporary while the input engine is stopped.
-    // Reserve through storage commit, then release even on error. The owner
-    // restores the latest applied configuration when the settings window exits.
+    // Working shortcuts stay registered while the modeless sheet is open.
+    // Retain the candidate after a successful commit; restore the previous
+    // live registrations on validation/storage failure or exceptions.
     template<typename Acquire, typename Release, typename Save>
     SettingsApplyResult CommitAppSettings(AppSettings const& previous, AppSettings const& candidate,
         Acquire&& acquire, Release&& release, Save&& save)
     {
         SettingsApplyResult result;
         if (!ValidAppSettings(candidate)) { result.issue = SettingsApplyIssue::Invalid; result.error = E_INVALIDARG; return result; }
-        struct Cleanup { Release& callback; ~Cleanup() { callback(); } } cleanup{ release };
+        bool committed{};
+        struct Rollback {
+            Acquire& acquire; Release& release; HotkeySettings const& previous; bool& committed;
+            ~Rollback() { if (!committed) { release(); acquire(previous); } }
+        } rollback{ acquire, release, previous.hotkeys, committed };
+        release();
         result.availability = acquire(candidate.hotkeys);
         for (size_t i = 0; i < HotkeyActionCount; ++i) {
             auto const& item = result.availability.items[i];
@@ -58,6 +63,7 @@ namespace RegionLens::native
         }
         result.error = save(candidate);
         if (FAILED(result.error)) result.issue = SettingsApplyIssue::Storage;
+        else committed = true;
         return result;
     }
 

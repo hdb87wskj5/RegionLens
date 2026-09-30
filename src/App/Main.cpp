@@ -125,7 +125,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             DiagnosticScope loop(DiagnosticStage::MessageLoop);
             MSG message{}; int status{};
             while ((status = GetMessageW(&message, nullptr, 0, 0)) > 0)
-            { TranslateMessage(&message); DispatchMessageW(&message); }
+            { if (!controller.ProcessMessage(message)) { TranslateMessage(&message); DispatchMessageW(&message); } }
             result = status == -1 ? EXIT_FAILURE : int(message.wParam);
             loop.End(DWORD(result));
             Record(DiagnosticEvent::Checkpoint, { int64_t(DiagnosticStage::ControllerStop), 0 });

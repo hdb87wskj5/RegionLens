@@ -6,6 +6,8 @@
 
 区域镜可以把 Windows 屏幕上的选定区域显示在可移动、可缩放或全屏的实时窗口中。支持多个区域、截图、画质设置和受安全恢复机制保护的鼠标映射。
 
+设置窗口是普通非置顶窗口，可正常截图和框选；打开期间仍可新建区域、使用鼠标映射和全局快捷键。仅录入快捷键或提交配置时进行必要的短时保护。
+
 ### 下载与安装
 
 目前**没有公开安装包**。现有 1.3.0 安装包使用仅面向本地和熟人测试的自签名证书；其安装过程会请求管理员权限，并把证书加入 Windows 的受信任根证书颁发机构和受信任发布者存储，因此暂不面向公众分发。
@@ -35,6 +37,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Unsigned
 ## English
 
 RegionLens mirrors a selected part of the Windows desktop into a movable, resizable, or full-screen live window. It supports multiple regions, screenshots, image-quality controls, and guarded mouse mapping.
+
+Settings is an ordinary non-topmost, capturable window. Region creation, mouse mapping, and global shortcuts remain available while it is open; brief protection applies only when recording shortcuts or committing settings.
 
 ### Download and install
 

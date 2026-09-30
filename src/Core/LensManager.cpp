@@ -573,14 +573,14 @@ namespace RegionLens::native
         ApplyUiPause();
     }
 
-    void LensManager::SetSettingsUiOpen(bool open)
+    void LensManager::SetSettingsCommitInProgress(bool committing)
     {
-        m_uiPause.Settings(open);
-        if (open) {
+        m_uiPause.Settings(committing);
+        if (committing) {
             for (auto& [id, lens] : m_lenses) lens->SetUiCursorPaused(true);
             m_mappingStandby.Suspend();
-            // Stop the input worker and guard while settings are open, but do
-            // not clear the standby buttons.
+            // Only pause while committing runtime settings, never merely
+            // because the modeless sheet is open. Preserve standby buttons.
             if (m_inputMapping && Runtime().persistentSoftwareCursor) m_inputMapping->ReleaseRoute();
             EndSoftwareCursor();
             if (m_inputMapping && !m_inputMapping->DeactivateAll()) DisableAllInputMappings();

@@ -93,6 +93,28 @@ namespace RegionLens::native
     HotkeySettings LoadHotkeySettings() noexcept;
     bool SaveHotkeySettings(HotkeySettings const& settings) noexcept;
 
+    template<typename Probe>
+    HotkeyRegistrationResult ProbeHotkeysPreservingRegistrations(HotkeySettings const& candidate,
+        std::array<HotkeyBinding, HotkeyActionCount> const& owned,
+        std::array<bool, HotkeyActionCount> const& registered, Probe&& probe)
+    {
+        HotkeyRegistrationResult result;
+        for (size_t i = 0; i < HotkeyActionCount; ++i) {
+            auto binding = candidate.bindings[i];
+            auto& item = result.items[i];
+            item.requested = binding.Enabled();
+            if (!item.requested) continue;
+            if (!IsSupportedHotkey(binding)) { item.succeeded = false; item.error = ERROR_INVALID_PARAMETER; continue; }
+            bool own = false;
+            for (size_t j = 0; j < HotkeyActionCount; ++j)
+                own |= registered[j] && owned[j] == binding;
+            if (own) continue;
+            item.error = probe(i, binding);
+            item.succeeded = item.error == ERROR_SUCCESS;
+        }
+        return result;
+    }
+
     template<typename Release, typename Acquire>
     HotkeyTransactionResult ApplyHotkeysTransactional(
         HotkeySettings const& previous,

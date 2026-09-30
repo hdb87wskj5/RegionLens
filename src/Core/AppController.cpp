@@ -34,6 +34,17 @@ namespace RegionLens::native
         Shutdown();
     }
 
+    bool AppController::ProcessMessage(MSG& message)
+    {
+        // Keep the sheet alive while native callbacks may close it or shut
+        // down the controller. Only the sheet's own messages are consumed.
+        auto dialog = m_settingsWindow;
+        if (!dialog) return false;
+        auto consumed = dialog->ProcessMessage(message);
+        if (dialog->Finished() && m_settingsWindow == dialog) m_settingsWindow.reset();
+        return consumed;
+    }
+
     bool AppController::Initialize(bool quietStartup)
     {
         m_device = std::make_shared<D3DDevice>();
@@ -258,7 +269,7 @@ namespace RegionLens::native
             PostQuitMessage(0);
             return 0;
         case WM_HOTKEY:
-            if (m_settingsOpening) return 0;
+            if (m_settingsRecording) return 0;
             if (wParam == NewRegionHotkeyId)
             {
                 StartNewSelection();
@@ -407,13 +418,13 @@ namespace RegionLens::native
             }
         }
         if (m_lensManager)
-            m_lensManager->RefreshTopmost(m_shuttingDown || m_modalUi || m_settingsOpening || m_selectionOverlay || m_pendingSelectionMonitor, eventWake);
+            m_lensManager->RefreshTopmost(m_shuttingDown || m_modalUi || m_settingsApplying || m_selectionOverlay || m_pendingSelectionMonitor, eventWake);
         if (auto probe = Runtime().weTypeProbe; probe && m_lensManager)
         {
             auto now = GetTickCount64();
             if (ShouldAttachWeTypeCompatibility(m_weTypeCompatibilityEnabled,
                 probe->Enabled(), probe->HasTargets(),
-                m_shuttingDown || m_modalUi || m_settingsOpening ||
+                m_shuttingDown || m_modalUi || m_settingsApplying ||
                     m_selectionOverlay || m_pendingSelectionMonitor,
                 m_lensManager->WeTypeDemotionIdle(), now, m_nextWeTypeAttachMs))
             {
@@ -524,6 +535,12 @@ namespace RegionLens::native
             auto binding = settings[action];
             auto& item = result.items[index];
             item.requested = binding.Enabled();
+            if (m_registeredHotkeys[index] && m_registeredBindings[index] == binding) return;
+            if (m_registeredHotkeys[index]) {
+                UnregisterHotKey(m_window, id);
+                m_registeredHotkeys[index] = false;
+                m_registeredBindings[index] = {};
+            }
             if (!item.requested) return;
             if (!IsSupportedHotkey(binding))
             {
@@ -542,6 +559,7 @@ namespace RegionLens::native
             }
 
             m_registeredHotkeys[index] = true;
+            m_registeredBindings[index] = binding;
         };
 
         for (size_t i = 0; i < HotkeyActionCount; ++i)
@@ -551,11 +569,21 @@ namespace RegionLens::native
 
     HotkeyRegistrationResult AppController::ProbeHotkeyAvailability(HotkeySettings const& settings)
     {
-        // Settings owns a complete engine pause. Use the tracked registration
-        // set for both validation and cleanup; never leave anonymous probe IDs.
-        auto result = RegisterConfiguredHotkeys(settings);
-        ReleaseConfiguredHotkeys();
-        return result;
+        // Reacquire previously unavailable applied bindings if their owner
+        // has exited. Probing a draft must never release a working shortcut.
+        if (!m_settingsRecording && !m_settingsApplying)
+            m_hotkeyRegistration = RegisterConfiguredHotkeys(m_hotkeys);
+        return ProbeHotkeysPreservingRegistrations(settings, m_registeredBindings, m_registeredHotkeys,
+            [this](size_t index, HotkeyBinding binding) {
+                constexpr int ProbeBase = 100;
+                SetLastError(ERROR_SUCCESS);
+                if (RegisterHotKey(m_window, ProbeBase + int(index), binding.modifiers | MOD_NOREPEAT, binding.virtualKey)) {
+                    UnregisterHotKey(m_window, ProbeBase + int(index));
+                    return DWORD(ERROR_SUCCESS);
+                }
+                auto error = GetLastError();
+                return error ? error : DWORD(ERROR_GEN_FAILURE);
+            });
     }
 
     void AppController::ReleaseConfiguredHotkeys()
@@ -565,6 +593,7 @@ namespace RegionLens::native
         {
             if (m_registeredHotkeys[i]) UnregisterHotKey(m_window, HotkeyIds[i]);
             m_registeredHotkeys[i] = false;
+            m_registeredBindings[i] = {};
         }
     }
 
@@ -671,9 +700,10 @@ namespace RegionLens::native
     }
 
 
-    void AppController::ShowSettings()
+    void AppController::ShowSettings(bool visible)
     {
         if (!m_window || m_shuttingDown) return;
+        if (m_settingsWindow && m_settingsWindow->Finished()) m_settingsWindow.reset();
         if (m_settingsWindow) { m_settingsWindow->Activate(); return; }
         if (m_settingsOpening) return;
         if (m_selectionOverlay || m_pendingSelectionMonitor) {
@@ -682,37 +712,44 @@ namespace RegionLens::native
             return;
         }
         m_settingsOpening = true;
-        m_modalUi = true;
-        if (auto probe = Runtime().weTypeProbe)
-            probe->Stop(WeTypeProbeStopReason::SettingsPause);
         try {
-            if (m_lensManager) m_lensManager->SetSettingsUiOpen(true);
             if (!m_shuttingDown) {
-                ReleaseConfiguredHotkeys();
                 auto dialog = std::make_shared<SettingsWindow>(m_settings,
                     [this](HotkeySettings const& settings) { return ProbeHotkeyAvailability(settings); },
-                    [this](AppSettings const& settings) { return ApplySettings(settings); });
+                    [this](AppSettings const& settings) { return ApplySettings(settings); },
+                    [this](bool recording) {
+                        m_settingsRecording = recording;
+                        if (recording) ReleaseConfiguredHotkeys();
+                        else if (!m_shuttingDown) m_hotkeyRegistration = RegisterConfiguredHotkeys(m_hotkeys);
+                    });
                 m_settingsWindow = dialog;
-                dialog->Run(m_window); // Local ownership survives reentrant application shutdown.
+                if (!dialog->Show(m_window, visible)) throw std::runtime_error("Settings property sheet creation failed");
             }
         } catch (...) {
             if (m_settingsWindow) m_settingsWindow->Close();
+            m_settingsWindow.reset();
             if (!m_shuttingDown) Notify(Localized(L"设置不可用", L"Settings unavailable"),
                 Localized(L"无法打开设置，原配置未改变。", L"Could not open Settings. Previous configuration retained."), NIIF_WARNING);
         }
-        m_settingsWindow.reset();
         m_settingsOpening = false;
-        m_modalUi = false;
-        if (!m_shuttingDown) {
-            m_hotkeyRegistration = RegisterConfiguredHotkeys(m_hotkeys);
-            if (m_lensManager) m_lensManager->SetSettingsUiOpen(false);
-        }
     }
 
     SettingsApplyResult AppController::ApplySettings(AppSettings const& settings)
     {
-        if (m_shuttingDown || !m_settingsOpening)
+        if (m_shuttingDown || !m_settingsWindow || m_settingsApplying)
             return { SettingsApplyIssue::Cancelled, HRESULT_FROM_WIN32(ERROR_CANCELLED), {} };
+        m_settingsApplying = true;
+        struct Resume {
+            AppController& owner;
+            ~Resume() {
+                owner.m_settingsApplying = false;
+                if (!owner.m_shuttingDown && owner.m_lensManager) owner.m_lensManager->SetSettingsCommitInProgress(false);
+            }
+        } resume{ *this };
+        // The sheet itself stays modeless. Only committing runtime geometry
+        // briefly drains input before updating existing regions.
+        if (m_lensManager) m_lensManager->SetSettingsCommitInProgress(true);
+        if (m_shuttingDown) return { SettingsApplyIssue::Cancelled, HRESULT_FROM_WIN32(ERROR_CANCELLED), {} };
         // Allocate new runtime values before committing the single registry value.
         auto candidate = settings;
         auto directory = ResolveScreenshotDirectory(candidate, *Runtime().identity);
@@ -720,7 +757,10 @@ namespace RegionLens::native
             [this](HotkeySettings const& keys) { return RegisterConfiguredHotkeys(keys); },
             [this] { ReleaseConfiguredHotkeys(); },
             [this](AppSettings const& value) { return SaveAppSettings(*Runtime().identity, value); });
-        if (!result.Applied()) return result;
+        if (!result.Applied()) {
+            m_hotkeyRegistration = RegisterConfiguredHotkeys(m_hotkeys);
+            return result;
+        }
         bool qualityChanged = m_settings.quality != candidate.quality;
         bool fullscreenAspectChanged = m_settings.fullscreenAspectFit != candidate.fullscreenAspectFit;
         bool languageChanged = m_settings.language != candidate.language;
@@ -786,8 +826,6 @@ namespace RegionLens::native
 
     void AppController::StartNewSelection()
     {
-        if (m_settingsWindow) { m_settingsWindow->Activate(); return; }
-        if (m_settingsOpening) return;
         if (m_selectionOverlay || m_pendingSelectionMonitor)
         {
             Notify(Localized(L"正在框选", L"Selection in progress"),

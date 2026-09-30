@@ -50,8 +50,8 @@ namespace RegionLens::native
         }
     }
 
-    SettingsWindow::SettingsWindow(AppSettings const& current,Probe probe,Apply apply)
-        :m_draft(current),m_probe(std::move(probe)),m_apply(std::move(apply)) {}
+    SettingsWindow::SettingsWindow(AppSettings const& current,Probe probe,Apply apply,RecordingChanged recordingChanged)
+        :m_draft(current),m_probe(std::move(probe)),m_apply(std::move(apply)),m_recordingChanged(std::move(recordingChanged)) {}
     SettingsWindow::~SettingsWindow() { Close(); }
 
     bool SettingsWindow::Create(HWND owner,bool show,UINT fontPoints)
@@ -107,26 +107,21 @@ namespace RegionLens::native
         return 0;
     }
 
-    void SettingsWindow::Run(HWND owner)
+    bool SettingsWindow::Show(HWND owner,bool visible)
     {
-        if(!Create(owner,true)) throw std::runtime_error("Settings property sheet creation failed");
-        EnableWindow(owner,FALSE);
-        struct EnableOwner {HWND window; ~EnableOwner(){if(IsWindow(window)) EnableWindow(window,TRUE);}} restore{owner};
-        MSG message{}; int result=1;
-        while(!m_finished && (result=GetMessageW(&message,nullptr,0,0))>0) {
-            ProcessMessage(message);
-        }
-        Close();
-        if(result==0) PostQuitMessage(int(message.wParam));
+        return Create(owner,visible);
     }
 
-    void SettingsWindow::ProcessMessage(MSG& message)
+    bool SettingsWindow::ProcessMessage(MSG& message)
     {
-        if(m_finished || !m_window) return;
+        // Modeless dialog navigation belongs only to this sheet. Controller
+        // hotkeys and live/selection windows stay in the application's loop.
+        if(m_finished || !m_window ||
+            (message.hwnd!=m_window && !IsChild(m_window,message.hwnd))) return false;
         if((message.hwnd==m_window || IsChild(m_window,message.hwnd)) &&
             (message.message==WM_KEYDOWN || message.message==WM_SYSKEYDOWN)) {
-            if(m_recording) {CaptureKey(message.wParam,message.lParam);return;}
-            if(message.wParam==VK_ESCAPE && HandleEscape()) return;
+            if(m_recording) {CaptureKey(message.wParam,message.lParam);return true;}
+            if(message.wParam==VK_ESCAPE && HandleEscape()) return true;
         }
         if(message.hwnd==m_window && message.message==WM_CLOSE) {
             PropSheet_PressButton(m_window,PSBTN_CANCEL);
@@ -137,6 +132,13 @@ namespace RegionLens::native
         // The native command path can bypass our WM_COMMAND/WM_CLOSE subclass.
         // Destroy only after native notification/page-list traversal unwinds.
         FinishNativeClose();
+        return true;
+    }
+    void SettingsWindow::SetRecording(std::optional<size_t> recording)
+    {
+        bool changed=m_recording.has_value()!=recording.has_value();
+        m_recording=recording;
+        if(changed && m_recordingChanged) m_recordingChanged(recording.has_value());
     }
     void SettingsWindow::RequestFinishCheck()
     {
@@ -164,6 +166,7 @@ namespace RegionLens::native
             m_forceClose=true; m_ending=true; RequestFinishCheck(); return;
         }
         m_destroying=true; m_finished=true; m_ending=true;
+        SetRecording(std::nullopt);
         if(m_folderDialog) m_folderDialog->Close(HRESULT_FROM_WIN32(ERROR_CANCELLED));
         if(m_window) DestroyWindow(m_window);
         m_destroying=false;
@@ -177,7 +180,7 @@ namespace RegionLens::native
             m_draft.editing.quality=previous;
             SendMessageW(quality,CB_SETCURSEL,WPARAM(previous),0);m_qualityBeforeDrop.reset();return true;
         }
-        if(m_recording) {m_recording.reset();RefreshKeyValues();return true;}
+        if(m_recording) {SetRecording(std::nullopt);RefreshKeyValues();return true;}
         auto combo=GetDlgItem(m_pages[0],LanguageId);
         if(SendMessageW(combo,CB_GETDROPPEDSTATE,0,0)) {
             auto previous=m_languageBeforeDrop.value_or(m_draft.editing.language);
@@ -206,8 +209,11 @@ namespace RegionLens::native
                 if(!self->m_ending && !self->m_finished) self->SelectPage(1);
                 return 0;
             }
-            if(message==WM_ACTIVATE && LOWORD(wp)!=WA_INACTIVE && !self->m_initializing)
-                self->RefreshAvailability();
+            if(message==WM_ACTIVATE && !self->m_initializing) {
+                if(LOWORD(wp)==WA_INACTIVE && self->m_recording) {
+                    self->SetRecording(std::nullopt);self->RefreshKeyValues();
+                } else if(LOWORD(wp)!=WA_INACTIVE) self->RefreshAvailability();
+            }
             if(message==WM_SIZE && !self->m_initializing && !self->m_dpiChanging) {
                 auto result=DefSubclassProc(window,message,wp,lp); self->LayoutSheet();return result;
             }
@@ -225,6 +231,7 @@ namespace RegionLens::native
             if(message==WM_NCDESTROY) {
                 RemoveWindowSubclass(window,SheetProc,1);
                 self->m_window=nullptr; self->m_tabs=nullptr; self->m_finished=true;
+                self->SetRecording(std::nullopt);
                 self->m_pages={}; self->m_status={}; self->m_values={};
                 for(auto& item:self->m_items) item.window=nullptr;
             }
@@ -292,7 +299,7 @@ namespace RegionLens::native
         case WM_NOTIFY:
             if(auto hdr=reinterpret_cast<NMHDR*>(lp);hdr && hdr->hwndFrom==m_window) switch(hdr->code) {
             case PSN_SETACTIVE:
-                m_page=page; m_recording.reset();
+                m_page=page; SetRecording(std::nullopt);
                 if(!m_initializing) {if(page==1) RefreshAvailability(); else RefreshKeyValues();}
                 SetWindowLongPtrW(window,DWLP_MSGRESULT,0); return TRUE;
             case PSN_KILLACTIVE:
@@ -311,7 +318,7 @@ namespace RegionLens::native
             case PSN_QUERYCANCEL:
                 SetWindowLongPtrW(window,DWLP_MSGRESULT,m_busy || m_folderOpening || m_refreshing || m_ending);return TRUE;
             case PSN_RESET:
-                if(!m_ending) {m_draft.Cancel();m_recording.reset();m_languageBeforeDrop.reset();m_ending=true;}
+                if(!m_ending) {m_draft.Cancel();SetRecording(std::nullopt);m_languageBeforeDrop.reset();m_ending=true;}
                 RequestFinishCheck();return TRUE;
             }
             break;
@@ -564,10 +571,10 @@ namespace RegionLens::native
     {
         if(m_busy || m_folderOpening || m_refreshing || m_initializing || m_ending || m_finished) return;
         if(id>=RecordBase && id<RecordBase+int(HotkeyActionCount)) {
-            m_recording=size_t(id-RecordBase);RefreshKeyValues();SetFocus(m_pages[1]);return;
+            SetRecording(size_t(id-RecordBase));RefreshKeyValues();SetFocus(m_pages[1]);return;
         }
         if(id>=ClearBase && id<ClearBase+int(HotkeyActionCount)) {
-            m_recording.reset();m_draft.editing.hotkeys.bindings[id-ClearBase]={};SetStatus(L"");RefreshAvailability();return;
+            SetRecording(std::nullopt);m_draft.editing.hotkeys.bindings[id-ClearBase]={};SetStatus(L"");RefreshAvailability();return;
         }
         switch(id) {
         case SharpenId:
@@ -604,13 +611,13 @@ namespace RegionLens::native
         case OpenId:OpenFolder();break;
         case DefaultDirectoryId:m_draft.editing.screenshotDirectory.clear();
             SetDlgItemTextW(m_pages[0],DirectoryId,ResolveScreenshotDirectory(m_draft.editing,*Runtime().identity).c_str());break;
-        case RestoreKeysId:m_recording.reset();m_draft.editing.hotkeys=DefaultHotkeySettings();RefreshAvailability();break;
+        case RestoreKeysId:SetRecording(std::nullopt);m_draft.editing.hotkeys=DefaultHotkeySettings();RefreshAvailability();break;
         }
     }
     void SettingsWindow::CaptureKey(WPARAM key,LPARAM flags)
     {
         if(!m_recording || (flags&(LPARAM(1)<<30))) return;
-        if(key==VK_ESCAPE) {m_recording.reset();RefreshKeyValues();return;}
+        if(key==VK_ESCAPE) {SetRecording(std::nullopt);RefreshKeyValues();return;}
         if(Modifier(key)) return;
         UINT modifiers{};
         if(GetKeyState(VK_CONTROL)&0x8000) modifiers|=MOD_CONTROL;
@@ -618,11 +625,11 @@ namespace RegionLens::native
         if(GetKeyState(VK_SHIFT)&0x8000) modifiers|=MOD_SHIFT;
         HotkeyBinding binding{modifiers,UINT(key)};
         if(!IsSupportedHotkey(binding)) {SetStatus(Localized(L"请使用 Ctrl 或 Alt 加字母、数字或 F1–F12。",L"Use Ctrl or Alt with a letter, digit, or F1–F12."));return;}
-        m_draft.editing.hotkeys.bindings[*m_recording]=binding;m_recording.reset();SetStatus(L"");RefreshAvailability();
+        m_draft.editing.hotkeys.bindings[*m_recording]=binding;SetRecording(std::nullopt);SetStatus(L"");RefreshAvailability();
     }
     bool SettingsWindow::ConfirmChanges()
     {
-        m_recording.reset();
+        SetRecording(std::nullopt);
         ReadQuality();m_qualityBeforeDrop.reset();
         ReadLanguage();
         // Confirmation completes any language combo transaction.  A delayed

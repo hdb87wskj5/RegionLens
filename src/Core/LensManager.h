@@ -33,7 +33,7 @@ namespace RegionLens::native
         void UpdateInputMapping(uint64_t id);
         void SuspendInputMappings();
         void ResumeInputMappings();
-        void SetSettingsUiOpen(bool open);
+        void SetSettingsCommitInProgress(bool committing);
         void SetQualityLevel(LensSharpness level);
         void SetFullscreenAspectFitEnabled(bool enabled);
         void SetNewWindowTopmost(bool enabled) noexcept { m_newWindowTopmost = enabled; }
